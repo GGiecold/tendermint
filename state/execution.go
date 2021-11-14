@@ -1,9 +1,13 @@
 package state
 
+// inject a clock
+// have a part of the config be a timesource
+//
 import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"time"
 
 	abci "github.com/tendermint/tendermint/abci/types"
@@ -25,6 +29,7 @@ import (
 type BlockExecutor struct {
 	// save state, validators, consensus params, abci responses here
 	store Store
+	c     net.Conn
 
 	// use blockstore for the pruning functions.
 	blockStore BlockStore

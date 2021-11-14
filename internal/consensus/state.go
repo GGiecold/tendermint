@@ -545,6 +545,7 @@ func (cs *State) SetProposalAndBlock(
 	peerID types.NodeID,
 ) error {
 
+	fmt.Println(proposal.BlockID.Hash)
 	if err := cs.SetProposal(proposal, peerID); err != nil {
 		return err
 	}
@@ -1116,7 +1117,10 @@ func (cs *State) enterPropose(height int64, round int32) {
 	}()
 
 	// If we don't get the proposal and all block parts quick enough, enterPrevote
-	cs.scheduleTimeout(cs.config.Propose(round), height, round, cstypes.RoundStepPropose)
+	waitingTime := proposalStepWaitingTime(tmtime.DefaultSource{}, cs.state.LastBlockTime, cs.state.ConsensusParams.Timestamp)
+	proposalTimeout := maxDuration(cs.config.Propose(round), waitingTime)
+	fmt.Println("waiting time ", waitingTime)
+	cs.scheduleTimeout(proposalTimeout, height, round, cstypes.RoundStepPropose)
 
 	// Nothing more to do if we're not a validator
 	if cs.privValidator == nil {
@@ -1869,6 +1873,7 @@ func (cs *State) defaultSetProposal(proposal *types.Proposal) error {
 	}
 
 	p := proposal.ToProto()
+	fmt.Println(proposal.Signature)
 	// Verify signature
 	if !cs.Validators.GetProposer().PubKey.VerifySignature(
 		types.ProposalSignBytes(cs.state.ChainID, p), proposal.Signature,
@@ -2411,4 +2416,39 @@ func repairWalFile(src, dst string) error {
 	}
 
 	return nil
+}
+
+// proposerWaitTime determines how long the proposer should wait to propose its next block.
+// Block times must be monotonically increasing, so if the block time of the previous
+// block is larger than the proposer's current time, then the proposer will sleep
+// until its local clock exceeds the previous block time.
+func proposerWaitTime(lt tmtime.Source, bt time.Time) time.Duration {
+	t := lt.Now()
+	if t.After(bt) {
+		return 0
+	}
+	return bt.Sub(t)
+}
+
+// proposalStepWaitingTime determines how long a validator should wait for a block
+// to be sent from a proposer. This duration is determined as a result of the
+// previous block's time as well as by the Accuracy and MsgDelay timestamp parameters.
+// The validator's and the proposer's clocks should differ from eachother by at most
+// 2 * Accuracy and the proposal should take at most MsgDelay to arrive at the validator.
+// The validator must therefore wait at least 2 * Accuracy + MsgDelay for the proposal
+// to arrive.
+func proposalStepWaitingTime(lt tmtime.Source, bt time.Time, tp types.TimestampParams) time.Duration {
+	t := lt.Now()
+	wt := bt.Add(2 * tp.Accuracy).Add(tp.MsgDelay)
+	if t.After(wt) {
+		return 0
+	}
+	return wt.Sub(t)
+}
+
+func maxDuration(d1 time.Duration, d2 time.Duration) time.Duration {
+	if d1-d2 > 0 {
+		return d1
+	}
+	return d2
 }
